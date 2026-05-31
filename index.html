@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0c14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="クエスト">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="icons/01.png">
+  <link rel="apple-touch-icon" sizes="152x152" href="icons/01.png">
+  <link rel="stylesheet" href="style.css">
+  <title>クエストリスト</title>
+</head>
+<body>
+
+  <!-- ===== メイン画面 ===== -->
+  <div id="screen-main" class="screen active">
+    <header class="app-header">
+      <h1 class="app-title">QUEST</h1>
+      <div class="header-actions">
+        <button class="icon-btn" id="btn-history"   aria-label="完了一覧">📜</button>
+        <button class="icon-btn" id="btn-templates" aria-label="テンプレート">⚡</button>
+        <button class="icon-btn" id="btn-settings"  aria-label="設定">⚙️</button>
+      </div>
+    </header>
+    <div class="list-wrap">
+      <div id="quest-list" class="quest-list"></div>
+      <div id="empty-state" class="empty-state hidden">
+        <div class="empty-icon">⚔️</div>
+        <p>クエストがありません</p>
+        <p class="sub">＋ ボタンで追加しましょう</p>
+      </div>
+    </div>
+    <button id="btn-add" class="fab" aria-label="追加">＋</button>
+  </div>
+
+  <!-- ===== 編集画面 ===== -->
+  <div id="screen-edit" class="screen">
+    <header class="app-header">
+      <button class="icon-btn back-btn" id="btn-edit-back" aria-label="戻る">←</button>
+      <h1 class="app-title" id="edit-title">クエスト追加</h1>
+      <button class="icon-btn save-btn" id="btn-edit-save" aria-label="保存">✓</button>
+    </header>
+    <div class="edit-form">
+
+      <div class="form-group">
+        <label class="form-label">クエスト名</label>
+        <input type="text" id="edit-name" placeholder="名前を入力..." autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">優先度</label>
+        <div class="priority-selector" id="edit-priority">
+          <button class="priority-btn" data-value="1">1</button>
+          <button class="priority-btn" data-value="2">2</button>
+          <button class="priority-btn" data-value="3">3</button>
+          <button class="priority-btn" data-value="4">4</button>
+          <button class="priority-btn" data-value="5">5</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">分類</label>
+        <div class="category-selector" id="edit-category">
+          <button class="category-btn" data-value="deadline">📅　期限あり</button>
+          <button class="category-btn" data-value="quick">⚡　速攻</button>
+          <button class="category-btn" data-value="normal">📋　通常</button>
+        </div>
+      </div>
+
+      <div class="form-group" id="deadline-group">
+        <label class="form-label">期限日</label>
+        <input type="date" id="edit-deadline">
+      </div>
+
+      <div class="form-group" id="recurring-group">
+        <label class="form-label">継続設定</label>
+        <label class="toggle-row">
+          <span>毎日繰り返す</span>
+          <span class="toggle">
+            <input type="checkbox" id="edit-recurring">
+            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          </span>
+        </label>
+        <div id="recurring-days" class="hidden">
+          <p class="form-hint">繰り返す曜日（未選択 = 毎日）</p>
+          <div class="days-selector">
+            <button class="day-btn" data-day="0">日</button>
+            <button class="day-btn" data-day="1">月</button>
+            <button class="day-btn" data-day="2">火</button>
+            <button class="day-btn" data-day="3">水</button>
+            <button class="day-btn" data-day="4">木</button>
+            <button class="day-btn" data-day="5">金</button>
+            <button class="day-btn" data-day="6">土</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ===== テンプレート画面 ===== -->
+  <div id="screen-templates" class="screen">
+    <header class="app-header">
+      <button class="icon-btn back-btn" id="btn-templates-back" aria-label="戻る">←</button>
+      <h1 class="app-title">テンプレート</h1>
+      <button class="icon-btn" id="btn-template-add" aria-label="追加">＋</button>
+    </header>
+    <div class="list-wrap">
+      <div id="template-list" class="quest-list"></div>
+      <div id="template-empty" class="empty-state hidden">
+        <div class="empty-icon">⚡</div>
+        <p>テンプレートがありません</p>
+        <p class="sub">＋ ボタンで登録しましょう</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 完了一覧画面 ===== -->
+  <div id="screen-history" class="screen">
+    <header class="app-header">
+      <button class="icon-btn back-btn" id="btn-history-back" aria-label="戻る">←</button>
+      <h1 class="app-title">完了一覧</h1>
+    </header>
+    <div id="history-stats" class="history-stats"></div>
+    <div id="history-list" class="history-list"></div>
+  </div>
+
+  <!-- ===== 設定画面 ===== -->
+  <div id="screen-settings" class="screen">
+    <header class="app-header">
+      <button class="icon-btn back-btn" id="btn-settings-back" aria-label="戻る">←</button>
+      <h1 class="app-title">設定</h1>
+    </header>
+    <div class="settings-list">
+      <button class="settings-item" id="btn-export">
+        <span class="settings-icon">💾</span>
+        <div class="settings-text">
+          <span class="settings-title">バックアップ作成</span>
+          <span class="settings-desc">JSONファイルを保存します</span>
+        </div>
+        <span class="settings-arrow">›</span>
+      </button>
+      <button class="settings-item" id="btn-import">
+        <span class="settings-icon">📂</span>
+        <div class="settings-text">
+          <span class="settings-title">データ復元</span>
+          <span class="settings-desc">JSONファイルから復元します</span>
+        </div>
+        <span class="settings-arrow">›</span>
+      </button>
+      <input type="file" id="import-file" accept=".json" style="display:none">
+    </div>
+  </div>
+
+  <!-- ===== Undo トースト ===== -->
+  <div id="undo-toast" class="undo-toast hidden" role="status">
+    <span id="undo-message">完了しました</span>
+    <button id="btn-undo">元に戻す</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
