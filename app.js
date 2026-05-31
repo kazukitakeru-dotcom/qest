@@ -74,6 +74,7 @@ function esc(str) {
 let state = { quests: [], templates: [], recurring: [], history: [] };
 let editMode   = null; // { type: 'quest'|'template', id: null|string, fromScreen: string }
 let undoTimer  = null;
+let recurringTimer = null;
 
 // ---- SORT ----
 const CAT_ORDER = { deadline: 0, quick: 1, normal: 2 };
@@ -283,18 +284,27 @@ function openEdit(type, id, fromScreen) {
     if (q) d = { name: q.name, priority: q.priority, category: q.category,
                  deadline: q.deadline, recurring: !!q.recurringDefId, days: [] };
     document.getElementById('edit-title').textContent = 'クエスト編集';
+    // 既存クエストは継続設定を非表示
     document.getElementById('recurring-group').style.display = 'none';
   } else if (type === 'quest') {
     document.getElementById('edit-title').textContent = 'クエスト追加';
     document.getElementById('recurring-group').style.display = '';
+    document.querySelector('#recurring-group .form-label').textContent = '継続設定';
+    document.querySelector('#recurring-group .toggle-row span:first-child').textContent = '毎日繰り返す';
   } else if (type === 'template' && id) {
     const t = state.templates.find(x => x.id === id);
-    if (t) d = { name: t.name, priority: t.priority, category: t.category, deadline: null, recurring: false, days: [] };
+    if (t) d = { name: t.name, priority: t.priority, category: t.category,
+                 deadline: null, recurring: !!t.recurring, days: t.days || [] };
     document.getElementById('edit-title').textContent = 'テンプレート編集';
-    document.getElementById('recurring-group').style.display = 'none';
+    document.getElementById('recurring-group').style.display = '';
+    document.querySelector('#recurring-group .form-label').textContent = '自動追加';
+    document.querySelector('#recurring-group .toggle-row span:first-child').textContent = '毎朝4時に自動追加';
   } else {
+    // template new
     document.getElementById('edit-title').textContent = 'テンプレート追加';
-    document.getElementById('recurring-group').style.display = 'none';
+    document.getElementById('recurring-group').style.display = '';
+    document.querySelector('#recurring-group .form-label').textContent = '自動追加';
+    document.querySelector('#recurring-group .toggle-row span:first-child').textContent = '毎朝4時に自動追加';
   }
 
   // fill
@@ -345,12 +355,11 @@ async function saveEdit() {
 
   if (type === 'quest') {
     if (id) {
-      // update existing
       const q = state.quests.find(x => x.id === id);
       if (q) { Object.assign(q, { name, priority, category, deadline }); await dbPut('quests', q); }
     } else {
       if (isRec) {
-        // create recurring definition + today instance
+        // 新規クエスト追加時に継続設定する場合は recurring store に保存（旧仕様互換）
         const def = { id: genId(), name, priority, category, days };
         await dbPut('recurring', def);
         state.recurring.push(def);
@@ -367,9 +376,12 @@ async function saveEdit() {
     // template
     if (id) {
       const t = state.templates.find(x => x.id === id);
-      if (t) { Object.assign(t, { name, priority, category }); await dbPut('templates', t); }
+      if (t) {
+        Object.assign(t, { name, priority, category, recurring: isRec, days });
+        await dbPut('templates', t);
+      }
     } else {
-      const t = { id: genId(), name, priority, category };
+      const t = { id: genId(), name, priority, category, recurring: isRec, days };
       await dbPut('templates', t);
       state.templates.push(t);
     }
@@ -413,6 +425,7 @@ function renderTemplates() {
     wrap.className = 'quest-item';
     wrap.dataset.id = t.id;
     const cat = CAT[t.category] || CAT.normal;
+    const recBadge = t.recurring ? '<span class="recurring-badge">🔁 4時</span>' : '';
 
     wrap.innerHTML = `
       <div class="quest-swipe-wrap">
@@ -424,6 +437,7 @@ function renderTemplates() {
             <div class="quest-meta">
               <span class="cat-icon">${cat.icon}</span>
               <span class="quest-priority">P${t.priority}</span>
+              ${recBadge}
             </div>
           </div>
         </div>
@@ -508,33 +522,72 @@ function renderHistory() {
 }
 
 // ============================================================
-//  RECURRING QUESTS
+//  RECURRING — テンプレートの自動追加（毎朝4時）
 // ============================================================
-async function processRecurring() {
-  const last  = localStorage.getItem('questLastDate');
-  const today = todayStr();
-  if (last === today) return;
 
-  // remove uncompleted recurring instances
+/** 次の4時までのミリ秒 */
+function msUntil4AM() {
+  const now  = new Date();
+  const next = new Date(now);
+  next.setHours(4, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  return next - now;
+}
+
+/** 今日の4時を過ぎているか */
+function isPast4AM() {
+  const now = new Date();
+  return now.getHours() >= 4;
+}
+
+/** 4時の自動追加を実行すべきか判定 */
+function shouldRunRecurring() {
+  if (!isPast4AM()) return false;
+  const last = localStorage.getItem('questLastRecurring');
+  return last !== todayStr();
+}
+
+/**
+ * recurring フラグの立ったテンプレートをクエストに追加する。
+ * ・前回分（未完了の recurring インスタンス）を削除してから追加
+ * ・曜日指定がある場合は一致した日のみ追加
+ */
+async function processRecurring() {
+  if (!shouldRunRecurring()) return;
+
+  const today = todayStr();
+  const dow   = new Date().getDay();
+
+  // 前回分の未完了 recurring インスタンスを削除
   const toRemove = state.quests.filter(q => q.recurringDefId);
   for (const q of toRemove) await dbDelete('quests', q.id);
   state.quests = state.quests.filter(q => !q.recurringDefId);
 
-  // generate today's instances
-  const dow = new Date().getDay();
-  for (const def of state.recurring) {
-    if (def.days.length === 0 || def.days.includes(dow)) {
-      await addQuestToState({
-        name:          def.name,
-        priority:      def.priority,
-        category:      def.category,
-        deadline:      null,
-        recurringDefId: def.id
-      });
-    }
+  // recurring テンプレートを今日分として追加
+  for (const t of state.templates) {
+    if (!t.recurring) continue;
+    // 曜日指定あり → 今日の曜日と一致しなければスキップ
+    if (t.days && t.days.length > 0 && !t.days.includes(dow)) continue;
+    await addQuestToState({
+      name:          t.name,
+      priority:      t.priority,
+      category:      t.category,
+      deadline:      null,
+      recurringDefId: t.id   // テンプレートIDを紐付け
+    });
   }
 
-  localStorage.setItem('questLastDate', today);
+  localStorage.setItem('questLastRecurring', today);
+}
+
+/** アプリ起動中に4時になったら自動実行するタイマーをセット */
+function scheduleRecurring() {
+  clearTimeout(recurringTimer);
+  recurringTimer = setTimeout(async () => {
+    await processRecurring();
+    renderQuests();
+    scheduleRecurring(); // 翌日4時のために再スケジュール
+  }, msUntil4AM());
 }
 
 // ============================================================
@@ -594,8 +647,21 @@ async function init() {
   state.recurring = await dbGetAll('recurring');
   state.history   = await dbGetAll('history');
 
+  // 起動時に4時チェック（4時以降なら即実行）
   await processRecurring();
   renderQuests();
+
+  // アプリが起動中のまま4時になったときのタイマー
+  scheduleRecurring();
+
+  // バックグラウンドから復帰したときもチェック
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+      await processRecurring();
+      renderQuests();
+      scheduleRecurring(); // タイマーをリセット
+    }
+  });
 
   // Service Worker
   if ('serviceWorker' in navigator) {
@@ -638,7 +704,7 @@ async function init() {
   });
 
   // Undo
-  document.getElementById('btn-undo').addEventListener('click', () => {}); // set per action
+  document.getElementById('btn-undo').addEventListener('click', () => {});
 
   // Priority
   document.querySelectorAll('.priority-btn').forEach(btn =>
