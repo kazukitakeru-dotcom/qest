@@ -337,7 +337,9 @@ input  { font-family: inherit; }
 }
 
 .edit-form input[type="text"],
-.edit-form input[type="date"] {
+.edit-form input[type="date"],
+.edit-form input[type="email"],
+.edit-form input[type="password"] {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -533,6 +535,27 @@ input  { font-family: inherit; }
 .settings-title { font-size: 15px; font-weight: 500; }
 .settings-desc  { font-size: 12px; color: var(--subtext); }
 .settings-arrow { color: var(--subtext); font-size: 20px; }
+
+/* ========================================================
+   SYNC
+======================================================== */
+.sync-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+
+.sync-btn {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 14px;
+  transition: background .14s;
+}
+.sync-btn:active  { background: var(--card-hover); }
+.sync-btn.primary { background: var(--accent-bg); border-color: var(--accent); color: var(--accent); }
+.sync-btn.danger  { color: var(--danger); border-color: var(--danger); }
+
+#sync-status.ok    { color: var(--success); }
+#sync-status.error { color: var(--danger); }
 
 /* ========================================================
    SCROLLBAR

@@ -135,6 +135,14 @@
       <h1 class="app-title">設定</h1>
     </header>
     <div class="settings-list">
+      <button class="settings-item" id="btn-sync">
+        <span class="settings-icon">🔄</span>
+        <div class="settings-text">
+          <span class="settings-title">複数端末で同期</span>
+          <span class="settings-desc" id="sync-summary">この端末だけに保存されています</span>
+        </div>
+        <span class="settings-arrow">›</span>
+      </button>
       <button class="settings-item" id="btn-export">
         <span class="settings-icon">💾</span>
         <div class="settings-text">
@@ -155,6 +163,52 @@
     </div>
   </div>
 
+  <!-- ===== 同期画面 ===== -->
+  <div id="screen-sync" class="screen">
+    <header class="app-header">
+      <button class="icon-btn back-btn" id="btn-sync-back" aria-label="戻る">←</button>
+      <h1 class="app-title">複数端末で同期</h1>
+    </header>
+    <div class="edit-form">
+
+      <div class="form-group">
+        <p class="form-hint" id="sync-status">ログインしていません（この端末だけに保存されます）</p>
+      </div>
+
+      <div class="form-group" id="sync-login-form">
+        <label class="form-label">メールアドレス</label>
+        <input type="email" id="sync-email" placeholder="mail@example.com" autocomplete="username" inputmode="email">
+        <label class="form-label" style="margin-top:12px">パスワード</label>
+        <input type="password" id="sync-password" placeholder="8文字以上" autocomplete="current-password">
+        <div class="sync-actions">
+          <button class="sync-btn primary" id="sync-do-login">ログイン</button>
+          <button class="sync-btn" id="sync-do-signup">新規登録</button>
+        </div>
+        <p class="form-hint" id="sync-login-msg"></p>
+        <p class="form-hint">
+          はじめての端末では「新規登録」でアカウントを作り、2台目以降は同じメールとパスワードで「ログイン」します。
+        </p>
+      </div>
+
+      <div class="form-group hidden" id="sync-logged-in">
+        <div class="sync-actions">
+          <button class="sync-btn primary" id="sync-now-btn">今すぐ同期</button>
+          <button class="sync-btn" id="sync-rollback-btn">取り込み前に戻す</button>
+          <button class="sync-btn danger" id="sync-logout-btn">ログアウト</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <p class="form-hint">
+          ログインすると、同じアカウントでログインした端末どうしでクエストが共有されます。<br>
+          ログインしなければ今までどおり、この端末の中だけに保存されます。<br>
+          オフラインでも普通に使えて、通信が戻ったときにまとめて送られます。
+        </p>
+      </div>
+
+    </div>
+  </div>
+
   <!-- ===== Undo トースト ===== -->
   <div id="undo-toast" class="undo-toast hidden" role="status">
     <span id="undo-message">完了しました</span>
@@ -162,5 +216,6 @@
   </div>
 
   <script src="app.js"></script>
+  <script src="sync.js"></script>
 </body>
 </html>

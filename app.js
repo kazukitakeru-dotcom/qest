@@ -4,8 +4,18 @@
 
 // ---- DB ----
 const DB_NAME    = 'questlist';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORES     = ['quests', 'templates', 'recurring', 'history'];
+
+// 同期のための内部ストア。バックアップの書き出し・復元の対象にはしない。
+//   tombstones … 消したものの墓標。これが無いと、まだその項目を持っている端末から
+//                押し戻されて復活する。
+//   meta       … 「毎朝4時の自動追加を最後に走らせた日」など、端末間で共有したい小さな値。
+const INTERNAL_STORES = ['tombstones', 'meta'];
+
+// 墓標は同期し終われば用済みだが、長く開いていなかった端末が後から繋がる場合に備えて1年持つ。
+const TOMB_KEEP_MS = 365 * 24 * 60 * 60 * 1000;
+
 let db;
 
 function openDB() {
@@ -13,7 +23,7 @@ function openDB() {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = e => {
       const d = e.target.result;
-      STORES.forEach(name => {
+      [...STORES, ...INTERNAL_STORES].forEach(name => {
         if (!d.objectStoreNames.contains(name))
           d.createObjectStore(name, { keyPath: 'id' });
       });
@@ -31,7 +41,16 @@ function dbGetAll(store) {
   });
 }
 
-function dbPut(store, item) {
+function dbGet(store, id) {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(store, 'readonly').objectStore(store).get(id);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+// ---- 生の読み書き（墓標を動かさない） ----
+function dbRawPut(store, item) {
   return new Promise((resolve, reject) => {
     const req = db.transaction(store, 'readwrite').objectStore(store).put(item);
     req.onsuccess = () => resolve();
@@ -39,7 +58,7 @@ function dbPut(store, item) {
   });
 }
 
-function dbDelete(store, id) {
+function dbRawDelete(store, id) {
   return new Promise((resolve, reject) => {
     const req = db.transaction(store, 'readwrite').objectStore(store).delete(id);
     req.onsuccess = () => resolve();
@@ -47,12 +66,53 @@ function dbDelete(store, id) {
   });
 }
 
-function dbClear(store) {
-  return new Promise((resolve, reject) => {
+// ---- アプリが使う入口。ここで墓標の面倒を見るので、呼ぶ側は今までどおりでよい ----
+function tombKey(store, id) { return `${store}:${id}`; }
+
+async function dbPut(store, item) {
+  await dbRawPut(store, item);
+  // 元に戻す（undo）で復活させたときは墓標を取り下げる
+  if (STORES.includes(store)) await dbRawDelete('tombstones', tombKey(store, item.id));
+  notifyLocalChange();
+}
+
+async function dbDelete(store, id) {
+  await dbRawDelete(store, id);
+  // 同期を使っていなくても記録しておく（軽いし、後からログインしても筋が通る）
+  if (STORES.includes(store)) {
+    await dbRawPut('tombstones', { id: tombKey(store, id), store, itemId: id, at: Date.now() });
+  }
+  notifyLocalChange();
+}
+
+async function dbClear(store) {
+  if (STORES.includes(store)) {
+    const at = Date.now();
+    for (const item of await dbGetAll(store)) {
+      await dbRawPut('tombstones', { id: tombKey(store, item.id), store, itemId: item.id, at });
+    }
+  }
+  await new Promise((resolve, reject) => {
     const req = db.transaction(store, 'readwrite').objectStore(store).clear();
     req.onsuccess = () => resolve();
     req.onerror   = () => reject(req.error);
   });
+  notifyLocalChange();
+}
+
+// sync.js が読み込まれていれば同期を予約させる。
+// 未ログイン／sync.js 無しなら何も起きない＝導入前とまったく同じ挙動。
+function notifyLocalChange() {
+  if (typeof window.qestOnLocalChange === 'function') {
+    try { window.qestOnLocalChange(); } catch (e) {}
+  }
+}
+
+async function pruneTombstones() {
+  const limit = Date.now() - TOMB_KEEP_MS;
+  for (const t of await dbGetAll('tombstones')) {
+    if (!(Number(t.at) > limit)) await dbRawDelete('tombstones', t.id);
+  }
 }
 
 // ---- HELPERS ----
@@ -61,6 +121,17 @@ function genId() {
 }
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
+}
+/** 端末の暦での今日。
+ *  todayStr() は UTC 基準なので、日本時間の 0時〜9時のあいだは前日を返す。
+ *  履歴の集計は completedAt（UTC のISO文字列）と突き合わせているので todayStr() のままでよいが、
+ *  「毎朝4時の自動追加」は暦の日付で数えないと、4時になっても前日ぶんと見なされて
+ *  朝9時まで走らない。自動追加まわりだけはこちらを使う。 */
+function todayLocalStr() {
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
 }
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -71,7 +142,7 @@ function esc(str) {
 }
 
 // ---- STATE ----
-let state = { quests: [], templates: [], recurring: [], history: [] };
+let state = { quests: [], templates: [], recurring: [], history: [], meta: { id: 'app', lastRecurring: null } };
 let editMode   = null; // { type: 'quest'|'template', id: null|string, fromScreen: string }
 let undoTimer  = null;
 let recurringTimer = null;
@@ -365,7 +436,10 @@ async function saveEdit() {
         state.recurring.push(def);
         const dayOfWeek = new Date().getDay();
         if (days.length === 0 || days.includes(dayOfWeek)) {
-          await addQuestToState({ name, priority, category, deadline: null, recurringDefId: def.id });
+          // 今日ぶんとして印を付ける。付けないと次の4時チェックで
+          // 「前回ぶん」と見なされて消えてしまう。
+          await addQuestToState({ name, priority, category, deadline: null,
+                                  recurringDefId: def.id, recurringDate: todayLocalStr() });
         }
       } else {
         await addQuestToState({ name, priority, category, deadline, recurringDefId: null });
@@ -393,12 +467,13 @@ async function saveEdit() {
 
 async function addQuestToState(data) {
   const q = {
-    id:            genId(),
+    id:            data.id || genId(),
     name:          data.name,
     priority:      data.priority || 3,
     category:      data.category || 'normal',
     deadline:      data.deadline || null,
     recurringDefId: data.recurringDefId || null,
+    recurringDate: data.recurringDate || null,
     createdAt:     new Date().toISOString()
   };
   await dbPut('quests', q);
@@ -540,44 +615,62 @@ function isPast4AM() {
   return now.getHours() >= 4;
 }
 
-/** 4時の自動追加を実行すべきか判定 */
+/** 4時の自動追加を実行すべきか判定
+ *  「最後に走らせた日」は端末ローカルではなく meta（同期対象）で持つ。
+ *  localStorage に置いていた頃は端末ごとに走ってしまい、二重に追加されていた。 */
 function shouldRunRecurring() {
   if (!isPast4AM()) return false;
-  const last = localStorage.getItem('questLastRecurring');
-  return last !== todayStr();
+  return state.meta.lastRecurring !== todayLocalStr();
 }
 
 /**
  * recurring フラグの立ったテンプレートをクエストに追加する。
- * ・前回分（未完了の recurring インスタンス）を削除してから追加
+ * ・前回分（今日ではない日の自動追加インスタンス）を削除してから追加
  * ・曜日指定がある場合は一致した日のみ追加
+ *
+ * 複数端末での注意：
+ * 生成するクエストのIDを「テンプレID＋日付」で決め打ちにしてある。
+ * こうすると両方の端末がまったく同じIDを作るので、同期しても二重に増えない。
+ * ランダムIDのままだと、片方が作った今日ぶんともう片方が作った今日ぶんが
+ * 別物として並んでしまう。
  */
 async function processRecurring() {
   if (!shouldRunRecurring()) return;
 
-  const today = todayStr();
+  const today = todayLocalStr();
   const dow   = new Date().getDay();
 
-  // 前回分の未完了 recurring インスタンスを削除
-  const toRemove = state.quests.filter(q => q.recurringDefId);
+  // 前回ぶんだけを片付ける。
+  // 「recurringDefId が付いているもの全部」を消すと、もう一方の端末が
+  // 今日ぶんとして作ったばかりのクエストまで巻き込んで消してしまう。
+  const toRemove = state.quests.filter(q => q.recurringDefId && q.recurringDate !== today);
   for (const q of toRemove) await dbDelete('quests', q.id);
-  state.quests = state.quests.filter(q => !q.recurringDefId);
+  state.quests = state.quests.filter(q => !(q.recurringDefId && q.recurringDate !== today));
 
   // recurring テンプレートを今日分として追加
   for (const t of state.templates) {
     if (!t.recurring) continue;
     // 曜日指定あり → 今日の曜日と一致しなければスキップ
     if (t.days && t.days.length > 0 && !t.days.includes(dow)) continue;
+
+    const id = `rec:${t.id}:${today}`;
+    if (state.quests.some(q => q.id === id)) continue;   // もう作られている
+    if (state.history.some(h => h.id === id)) continue;  // 他の端末で今日ぶんを完了済み
+    if (await dbGet('tombstones', tombKey('quests', id))) continue; // 他の端末で今日ぶんを削除済み
+
     await addQuestToState({
+      id,
       name:          t.name,
       priority:      t.priority,
       category:      t.category,
       deadline:      null,
-      recurringDefId: t.id   // テンプレートIDを紐付け
+      recurringDefId: t.id,  // テンプレートIDを紐付け
+      recurringDate:  today
     });
   }
 
-  localStorage.setItem('questLastRecurring', today);
+  state.meta.lastRecurring = today;
+  await dbPut('meta', state.meta);
 }
 
 /** アプリ起動中に4時になったら自動実行するタイマーをセット */
@@ -646,6 +739,20 @@ async function init() {
   state.templates = await dbGetAll('templates');
   state.recurring = await dbGetAll('recurring');
   state.history   = await dbGetAll('history');
+  state.meta      = (await dbGet('meta', 'app')) || { id: 'app', lastRecurring: null };
+
+  // 旧版は「最後に自動追加した日」を端末ローカルの localStorage に持っていた。
+  // 端末ごとに走ってしまい二重に追加されるので、meta に引き取って捨てる。
+  const legacyLast = localStorage.getItem('questLastRecurring');
+  if (legacyLast) {
+    if (!state.meta.lastRecurring) {
+      state.meta.lastRecurring = legacyLast;
+      await dbRawPut('meta', state.meta);
+    }
+    localStorage.removeItem('questLastRecurring');
+  }
+
+  await pruneTombstones();
 
   // 起動時に4時チェック（4時以降なら即実行）
   await processRecurring();
