@@ -331,6 +331,13 @@ async function _localSig(store, id) {
 
 // ---- 取得 ----
 async function _pull(sync) {
+  // 手元が空なのに同期の記録だけ残っている＝ブラウザに保存領域を回収されたなど、
+  // 消えるはずのない消え方をした状態。差分だけ取っても戻らないので全件取り直す。
+  if (sync.lastPulledAt && Object.keys(sync.items).length) {
+    let n = 0;
+    for (const s of STORES) n += await dbCount(s);
+    if (n === 0) sync.lastPulledAt = null;
+  }
   const since = sync.lastPulledAt ? `&updated_at=gt.${encodeURIComponent(sync.lastPulledAt)}` : '';
   const [rows, stateRows] = await Promise.all([
     _restAll(`qest_items?select=store,id,data,deleted,updated_at&order=updated_at.asc,id.asc${since}`),
@@ -352,8 +359,11 @@ async function _pull(sync) {
 
     // この端末にまだ送っていない変更があるなら、そちらを残す。
     // 送信側でサーバーに反映されるので、結局は新しい方に揃う。
+    // ただし sig が null（手元に無く、墓標も無い）ときは「消したから無い」のではなく
+    // 「理由なく消えている」状態なので、ローカル変更とは見なさずサーバーの内容を取り戻す。
+    // ブラウザに保存領域を回収されると、これが無いと二度と復元できなくなる。
     const sig = await _localSig(row.store, row.id);
-    if (sync.items[k] !== undefined && sync.items[k] !== sig) continue;
+    if (sig !== null && sync.items[k] !== undefined && sync.items[k] !== sig) continue;
 
     if (row.deleted) {
       await dbRawDelete(row.store, row.id);
