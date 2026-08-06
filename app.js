@@ -127,19 +127,20 @@ async function pruneTombstones() {
 function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2);
 }
-function todayStr() {
-  return new Date().toISOString().slice(0, 10);
-}
-/** 端末の暦での今日。
- *  todayStr() は UTC 基準なので、日本時間の 0時〜9時のあいだは前日を返す。
- *  履歴の集計は completedAt（UTC のISO文字列）と突き合わせているので todayStr() のままでよいが、
- *  「毎朝4時の自動追加」は暦の日付で数えないと、4時になっても前日ぶんと見なされて
- *  朝9時まで走らない。自動追加まわりだけはこちらを使う。 */
-function todayLocalStr() {
-  const d = new Date();
+/** 端末の暦での日付。
+ *  以前は new Date().toISOString().slice(0,10) を使っていたが、これは UTC 基準なので
+ *  日本時間だと 0時〜9時のあいだ前日を返す。同じ間違いを繰り返さないよう関数ごと消した。
+ *  日付として見せる・数えるものは必ずこちらを使う。 */
+function localDateStr(d = new Date()) {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
+}
+function todayLocalStr() { return localDateStr(); }
+/** completedAt（UTCのISO文字列）を、端末の暦での日付に直す。 */
+function localDateOfIso(iso) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : localDateStr(d);
 }
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
@@ -563,8 +564,10 @@ async function deleteTemplate(id, el) {
 //  HISTORY SCREEN
 // ============================================================
 function renderHistory() {
-  const today    = todayStr();
-  const todayH   = state.history.filter(h => (h.completedAt || '').slice(0,10) === today);
+  // completedAt は UTC の文字列。前は先頭10文字をそのまま比べていたので、
+  // 「本日の達成」が日本時間の朝9時で切り替わっていた（前夜の完了が今日に入る）。
+  const today    = todayLocalStr();
+  const todayH   = state.history.filter(h => localDateOfIso(h.completedAt) === today);
   const list     = document.getElementById('history-list');
   const statsEl  = document.getElementById('history-stats');
 
@@ -706,7 +709,7 @@ async function exportData() {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = Object.assign(document.createElement('a'), {
-    href: url, download: `questlist-backup-${todayStr()}.json`
+    href: url, download: `questlist-backup-${todayLocalStr()}.json`
   });
   a.click();
   URL.revokeObjectURL(url);
