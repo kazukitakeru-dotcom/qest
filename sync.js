@@ -18,7 +18,10 @@
 const SB_URL = 'https://kafaarlosuvqxxlxpvgg.supabase.co';
 const SB_KEY = 'sb_publishable_nSwOQo-YbEtDN_KTjBf80w_D6o0iLoA';
 
-const SESSION_KEY    = 'qest_session_v1';
+// ログイン状態は6アプリで共通。同じオリジンなので localStorage を共有できる。
+// キーを分けていたせいで、アプリの数だけログインが必要になっていた。
+const SESSION_KEY    = 'sb_session_v1';
+const LEGACY_SESSION_KEY = 'qest_session_v1';
 const SYNC_STATE_KEY = 'qest_sync_state_v1';
 const ROLLBACK_KEY   = 'qest_rollback_v1';
 
@@ -32,8 +35,16 @@ const DELETED_SIG = 'X';
 
 // ========== セッション ==========
 function sbLoadSession() {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); }
-  catch (e) { return null; }
+  try {
+    let raw = localStorage.getItem(SESSION_KEY);
+    // 旧キー（アプリごとに分かれていた頃のもの）からの引き継ぎ。
+    // これがあるので、共通化のためにログインし直す必要はない。
+    if (!raw) {
+      const old = localStorage.getItem(LEGACY_SESSION_KEY);
+      if (old) { localStorage.setItem(SESSION_KEY, old); raw = old; }
+    }
+    return JSON.parse(raw || 'null');
+  } catch (e) { return null; }
 }
 function sbSaveSession(s) {
   if (s) localStorage.setItem(SESSION_KEY, JSON.stringify(s));
@@ -524,7 +535,7 @@ document.addEventListener('DOMContentLoaded', () => {
   on('sync-now-btn', () => syncNow({ toast: true }));
   on('sync-rollback-btn', restoreRollback);
   on('sync-logout-btn', () => {
-    if (!confirm('ログアウトします。この端末のデータはそのまま残ります。よろしいですか？')) return;
+    if (!confirm('ログアウトします。ログインを共有している他のアプリもログアウトになります。\nこの端末のデータはそのまま残ります。よろしいですか？')) return;
     sbSignOut();
     updateSyncUI();
   });

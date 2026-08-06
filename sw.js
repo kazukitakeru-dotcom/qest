@@ -1,7 +1,7 @@
 // ファイルを更新したら CACHE_NAME を必ず上げること。
 // 上げないと古いキャッシュが配られて、変更が端末に届かない。
 // 新しいファイルを足したら FILES_TO_CACHE にも追加する。
-const CACHE_NAME = 'questlist-v2';
+const CACHE_NAME = 'questlist-v3';
 const FILES_TO_CACHE = [
   './',
   './index.html',
